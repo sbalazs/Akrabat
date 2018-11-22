@@ -337,24 +337,27 @@ class Akrabat_Db_Adapter_Pdo_Sqlsrv extends Zend_Db_Adapter_Pdo_Abstract
             $sql = preg_replace('/^SELECT\s/i', 'SELECT TOP ' . $count . ' ', $sql);
         } else {
             $orderby = stristr($sql, 'ORDER BY');
-            if ($orderby !== false) {
-                $sort  = (stripos($orderby, ' desc') !== false) ? 'desc' : 'asc';
-                $order = str_ireplace('ORDER BY', '', $orderby);
-                $order = trim(preg_replace('/\bASC\b|\bDESC\b/i', '', $order));
+
+            if (!$orderby) {
+                $over = 'ORDER BY (SELECT 0)';
+            } else {
+                $over = preg_replace('/\"[^,]*\".\"([^,]*)\"/i', '"inner_tbl"."$1"', $orderby);
             }
 
-            $sql = preg_replace('/^SELECT\s/i', 'SELECT TOP ' . ($count+$offset) . ' ', $sql);
+            // Remove ORDER BY clause from $sql
+            $sql = preg_replace('/\s+ORDER BY(.*)/', '', $sql);
 
-            $sql = 'SELECT * FROM (SELECT TOP ' . $count . ' * FROM (' . $sql . ') AS inner_tbl';
-            if ($orderby !== false) {
-                $innerOrder = preg_replace('/\".*\".\"(.*)\"/i', '"inner_tbl"."$1"', $order);
-                $sql .= ' ORDER BY ' . $innerOrder . ' ';
-                $sql .= (stripos($sort, 'asc') !== false) ? 'DESC' : 'ASC';
+            // Add ORDER BY clause as an argument for ROW_NUMBER()
+            $sql = "SELECT ROW_NUMBER() OVER ($over) AS \"ZEND_DB_ROWNUM\", * FROM ($sql) AS inner_tbl";
+
+            $start = $offset + 1;
+
+            if ($count == PHP_INT_MAX) {
+                $sql = "WITH outer_tbl AS ($sql) SELECT * FROM outer_tbl WHERE \"ZEND_DB_ROWNUM\" >= $start";
             }
-            $sql .= ') AS outer_tbl';
-            if ($orderby !== false) {
-                $outerOrder = preg_replace('/\".*\".\"(.*)\"/i', '"outer_tbl"."$1"', $order);
-                $sql .= ' ORDER BY ' . $outerOrder . ' ' . $sort;
+            else {
+                $end = $offset + $count;
+                $sql = "WITH outer_tbl AS ($sql) SELECT * FROM outer_tbl WHERE \"ZEND_DB_ROWNUM\" BETWEEN $start AND $end";
             }
         }
 
